@@ -49,12 +49,12 @@ def output(world,position,lst,cell_type):
 
 
 class Cell:
-    def __init__(self,position,generation,what_it_need,what_it_give,how_much_can_it_bear,resistance,stress_resistance,born_rate,
+    def __init__(self,position,generation,what_it_need,what_it_give,how_much_can_it_bear,resistance,stress_resistance,born_rate,hunger_resistance = 1,
              age = 50,grow_up_speed = 1,
              base_hp = 20,cell_type = 1):
         
-        delta1 = 2500
-        delta2 = 1  #两个值都是用来调节寿命的
+        delta1 = 1e4
+        delta2 = 1.5  #两个值都是用来调节寿命的
         
         self.position = position
         self.gen = generation
@@ -63,11 +63,12 @@ class Cell:
         self.bear = how_much_can_it_bear
         self.resist = resistance
         self.stress_resistance = stress_resistance
+        self.hunger_resistance = hunger_resistance
         self.bornrate = born_rate
         self.age = 1
-        self.maxage = age / (avg(what_it_need)-avg(what_it_give)) / avg(how_much_can_it_bear,2)*avg(resistance,2) / grow_up_speed / base_hp * delta1
+        self.maxage = age * (avg(what_it_need) - avg(what_it_give)) / avg(what_it_need) * avg(what_it_give) / avg(how_much_can_it_bear,2)*avg(resistance,2) / grow_up_speed / base_hp * delta1
+        self.grow_up_age = self.maxage / avg(what_it_need) / grow_up_speed * delta2 / avg(hunger_resistance)
         self.maxage = min(self.maxage , 50)
-        self.grow_up_age = self.maxage / avg(what_it_need) / grow_up_speed * delta2
         self.hp = base_hp
         self.basehp = base_hp
         self.type = cell_type
@@ -82,7 +83,7 @@ class Cell:
             if self.need[i] <= environment[i]:
                 environment[i] -= self.need[i]
             else:
-                s += (self.need[i] - environment[i]) * 5
+                s += (self.need[i] - environment[i]) / self.need[i] * self.basehp / len(self.need) * self.hunger_resistance[i]
                 environment[i] = 0
         s *= 0.2
         '''if s != 0:
@@ -125,28 +126,29 @@ class Cell:
     def evolve(self,evolve_speed = 1):
         global evolve_size
         random.seed()
-        what_it_need,what_it_give,how_much_can_it_bear,resistance,stress_resistance=[],[],[],[],self.stress_resistance
+        what_it_need,what_it_give,how_much_can_it_bear,resistance,hunger_resistance,stress_resistance=[],[],[],[],[],self.stress_resistance
         def randnum(evolve_size):return evolve_size*(random.random()-0.5)
         for i in range(len(self.need)):
             what_it_need.append(max(self.need[i]+randnum(evolve_size) * 2, 0))
             what_it_give.append(max(self.out[i]+randnum(evolve_size) * 2, 0))
             how_much_can_it_bear.append((self.bear[i]+randnum(evolve_size) * 10) % 50)
-            resistance.append(max(self.resist[i]+randnum(evolve_size) * 0.5 , 0.02))
-        stress_resistance += randnum(evolve_size) * 10
+            resistance.append(max(self.resist[i]+randnum(evolve_size) * 0.4 , 0.02))
+            hunger_resistance.append(max(self.hunger_resistance[i]+randnum(evolve_size) * 0.4, 0.5))
+        stress_resistance += randnum(evolve_size) * 20
         born_rate = (self.bornrate + randnum(evolve_size) * 2) % 10 
-        base_hp = self.basehp + randnum(evolve_size) * 5
+        base_hp = self.basehp + randnum(evolve_size) * 8
         cell_type = (self.type + randnum(evolve_size) * 2) % 5
         has_place = len(count_genes(world)) < 10  #只有当前基因种类不超过10时才可以演化(可根据培养皿大小适当调节)
         if not resonable(what_it_need,what_it_give) or not has_place:
             global days
             #print('day{},{}于{}演化失败'.format(days,self.gen,self.position))
-            return self.gen,self.need,self.out,self.bear,self.resist,self.stress_resistance,self.bornrate,50,1,self.basehp,self.type
+            return self.gen,self.need,self.out,self.bear,self.resist,self.stress_resistance,self.bornrate,self.hunger_resistance,50,1,self.basehp,self.type
         global family_tree
         a = family_tree
         for g in self.gen:
             a = a[g]
         a.append([])
-        return self.gen+[len(a)-1],what_it_need,what_it_give,how_much_can_it_bear,resistance,stress_resistance,born_rate,50,1,base_hp,cell_type
+        return self.gen+[len(a)-1],what_it_need,what_it_give,how_much_can_it_bear,resistance,stress_resistance,born_rate,hunger_resistance,50,1,base_hp,cell_type
     
     def is_adult(self):
         return self.age > self.grow_up_age
@@ -158,10 +160,10 @@ class Cell:
     
     
 #世界规则-------------------------
-nutrition = [0.5]*50
+nutrition = [1.2]*50
 basic_ratio = 1
 ratio = basic_ratio
-evolve_rate = 10  #变异速率
+evolve_rate = 5  #变异速率
 evolve_size = 2  #变异幅度
 born_cost = 1  #繁殖代价系数
 
@@ -179,9 +181,9 @@ def step(world):
                 born(i,j)
             for k in range(len(environment)):  #营养会趋向20至30之间
                 if environment[k] < 20:
-                    environment[k] += nutrition[k]*ratio
+                    environment[k] += nutrition[k]*ratio*(0.8+0.4*random.random())
                 elif environment[k] > 30:
-                    environment[k] -= nutrition[k]*ratio
+                    environment[k] -= nutrition[k]*ratio*(0.8+0.4*random.random())
                 if environment[k] > 100:  #最大值设为100
                     environment[k] = 100
                 elif environment[k] < 0:
@@ -219,13 +221,14 @@ def born(i,j):  #繁殖
                 cell = world[x][y][0]
                 if cell != None and cell.is_adult() and cell.hp > cell.basehp * born_cost:
                     #print(cell.age,cell.grow_up_age,cell.is_adult())
-                    ran -= cell.bornrate * born_cost
+                    ran -= cell.bornrate * (3-k**2-h**2) / 1.25
+                    cell.hp -= cell.basehp * born_cost
                     if ran <= 0:
                         #print('new life',ran,i,j)
                         #input()
                         cell.do_damage(cell.basehp)
-                        if ran < -evolve_rate * (3-k**2-h**2) / 200:  #符合条件是演化，否则正常繁殖
-                            world[i][j][0] = Cell([i,j],cell.gen,cell.need,cell.out,cell.bear,cell.resist,cell.stress_resistance,cell.bornrate,
+                        if ran < -evolve_rate / 100:  #符合条件是演化，否则正常繁殖
+                            world[i][j][0] = Cell([i,j],cell.gen,cell.need,cell.out,cell.bear,cell.resist,cell.stress_resistance,cell.bornrate,cell.hunger_resistance,
                                                   50,1,
                                                   cell.basehp,cell.type)
                         else:
@@ -235,7 +238,7 @@ def born(i,j):  #繁殖
 
 
 #天灾-------------------------
-basic_damage_days = 100  #天灾持续天数
+basic_damage_days = 50  #天灾持续天数
 basic_damage_level = 2  #初始天灾级别
 damage_days = 0  #当前天灾剩余天数
 damage_level = 0
@@ -334,7 +337,7 @@ def posion():  #剧毒，损失生命
 
 def violent():  #狂暴，治疗量降低，伤害增加
     global base_damage_factor,base_heal_factor,damage_level
-    base_damage_factor = 1 + 0.5 * damage_level
+    base_damage_factor = 1 + 0.3 * damage_level
     base_heal_factor = 1 - 0.3 * damage_level
     
     return 'violent'
@@ -390,6 +393,8 @@ except:
     pass
 
 
+#初始化培养皿---
+
 for i in range(50):
     l = []
     for j in range(50):
@@ -397,21 +402,25 @@ for i in range(50):
     world.append(l)
 
 
+
 #始祖细胞配制（可调）（但别tm瞎调这个细胞，尤其是那个抗性，分分钟暴毙）
-what_it_need = [2]*10
-what_it_give = [1.5]*10
+what_it_need = [3]*10
+what_it_give = [2]*10
 how_much_can_it_bear = [25]*10
 resistance = [1]*10
+hunger_resistance = [1]*10
 stress_resistance = 50
 born_rate = 5
 
 
 for i in range(3):
     for j in range(3):
-        world[10+i][3+j][0] = Cell([10+i,3+j],[],what_it_need,what_it_give,how_much_can_it_bear,resistance,stress_resistance,born_rate,
+        world[10+i][3+j][0] = Cell([10+i,3+j],[],what_it_need,what_it_give,how_much_can_it_bear,resistance,stress_resistance,born_rate,hunger_resistance,
              age = 50,grow_up_speed = 1,
              base_hp = 20,cell_type = 3)
 #初始化培养皿
+
+#---
 
 days = 1  #实验天数
 always_print = False
@@ -443,8 +452,8 @@ for i in world:
             gene = cell.gen
             if gene not in lst:
                 lst.append(gene)
-                f.write('gen={},need={},out={},bear={},resist={},stress={},bornrate={},baseage={},grow={},hp={},cell_type={}\n'.format(cell.gen,cell.need,cell.out,cell.bear,cell.resist,cell.stress_resistance,cell.bornrate,50,1,cell.basehp,cell.type))
-                f.write(str([cell.gen,cell.need,cell.out,cell.bear,cell.resist,cell.stress_resistance,cell.bornrate,50,1,cell.basehp,cell.type]))
+                f.write('gen={},need={},out={},bear={},resist={},stress={},bornrate={},hunger_resistance={},baseage={},grow={},hp={},cell_type={}\n'.format(cell.gen,cell.need,cell.out,cell.bear,cell.resist,cell.stress_resistance,cell.bornrate,cell.hunger_resistance,50,1,cell.basehp,cell.type))
+                f.write(str([cell.gen,cell.need,cell.out,cell.bear,cell.resist,cell.stress_resistance,cell.bornrate,hunger_resistance,50,1,cell.basehp,cell.type]))
                 f.write('\n\n')
 f.close()
 f2.close()
